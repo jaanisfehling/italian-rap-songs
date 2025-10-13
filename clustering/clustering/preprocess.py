@@ -40,7 +40,9 @@ def classify_cols(
     # All floating point columns are considered numeric
     num_cols: List[str] = list(df.select_dtypes(include=np.inexact).columns)
     cat_cols: List[str] = []
-    bool_cols_: List[str] = list(df.select_dtypes(include=np.bool_).columns) if bool_cols else []
+    bool_cols_: List[str] = (
+        list(df.select_dtypes(include=np.bool_).columns) if bool_cols else []
+    )
 
     remaining_cols = df.columns.difference(num_cols + bool_cols_)
 

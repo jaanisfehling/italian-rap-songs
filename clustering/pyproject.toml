@@ -1,0 +1,37 @@
+[project]
+name = "clustering"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Jaanis Fehling",email = "jaanisfehling@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.13, <3.14"
+dependencies = [
+    "pandas (>=2.3.3,<3.0.0)",
+    "numpy (>=2.3.3,<3.0.0)",
+    "stepmix (>=2.2.3,<3.0.0)",
+    "scikit-learn (==1.5.0)",
+    "scipy (>=1.16.2,<2.0.0)",
+    "gower (>=0.1.2,<0.2.0)",
+    "kmodes (>=0.12.2,<0.13.0)",
+    "scikit-learn-extra (>=0.3.0,<0.4.0)",
+    "kmedoids (>=0.5.3.1,<0.6.0.0)",
+    "matplotlib (>=3.10.7,<4.0.0)",
+    "pyqt6 (>=6.9.1,<7.0.0)",
+    "pyclustering (>=0.10.1.2,<0.11.0.0)",
+    "torch (>=2.8.0,<3.0.0)"
+]
+
+
+[dependency-groups]
+dev = [
+    "black (>=25.9.0,<26.0.0)",
+    "isort (>=7.0.0,<8.0.0)",
+    "mypy (>=1.18.2,<2.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
