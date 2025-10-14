@@ -2,7 +2,6 @@ from typing import Dict, List, Optional
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
-from sklearn.cluster import KMeans
 from sklearn.metrics import normalized_mutual_info_score, silhouette_score
 
 
@@ -18,42 +17,130 @@ def cluster_accuracy(labels_true, labels_pred):
     return cost_matrix[row_ind, col_ind].sum() / labels_pred.size
 
 
-def bic(x: np.ndarray, kmeans: KMeans) -> float:
-    # number of clusters
-    k = kmeans.n_clusters
-    # size of the clusters
-    M = np.bincount(kmeans.labels_)
-    # size of data set
-    n, d = x.shape
+def bic(
+    X: np.ndarray, labels: np.ndarray, centroids: Optional[np.ndarray] = None
+) -> float:
+    """
+    Calculate Bayesian Information Criterion (BIC) for clustering.
+
+    Args:
+        X: Data matrix of shape (n_samples, n_features)
+        labels: Cluster labels for each data point
+        centroids: Optional precomputed centroids. If None, will be computed.
+
+    Returns:
+        BIC score (higher is better, but typically negative)
+    """
+    n, d = X.shape
+    k = len(np.unique(labels))
+
+    # Input validation
     if d == 0:
-        logging.error("d = 0")
-        return 0.0
-    if n - k == 0:
-        logging.error("n - k = 0")
-        return 0.0
-    # compute variance for all clusters beforehand
-    cl_var = (1.0 / (d * (n - k))) * np.sum(
-        [
-            np.sum(
-                distance.cdist(
-                    x[np.nonzero(kmeans.labels_ == i)],
-                    [kmeans.cluster_centers_[i]],
-                    "euclidean",
-                )
-                ** 2
-            )
-            for i in range(k)
-        ]
+        logging.error("Number of features is 0")
+        return float("-inf")
+    if n <= k:
+        logging.error(
+            f"Number of samples ({n}) must be greater than number of clusters ({k})"
+        )
+        return float("-inf")
+    if k <= 0:
+        logging.error(f"Number of clusters must be positive, got {k}")
+        return float("-inf")
+
+    # Compute centroids if not provided
+    if centroids is None:
+        centroids = np.array([X[labels == i].mean(axis=0) for i in range(k)])
+
+    # Size of each cluster
+    M = np.bincount(labels, minlength=k)
+
+    # Remove empty clusters
+    non_empty_clusters = M > 0
+    k_actual = np.sum(non_empty_clusters)
+
+    if k_actual == 0:
+        return float("-inf")
+
+    # Compute within-cluster sum of squares for variance estimation
+    wcss = 0
+    for i in range(k):
+        if M[i] > 0:
+            cluster_points = X[labels == i]
+            wcss += np.sum((cluster_points - centroids[i]) ** 2)
+
+    # Pooled within-cluster variance (spherical assumption)
+    if n - k_actual <= 0:
+        logging.error(f"Insufficient degrees of freedom: n-k = {n - k_actual}")
+        return float("-inf")
+
+    sigma_squared = wcss / (d * (n - k_actual))
+
+    if sigma_squared <= 0:
+        logging.error("Variance is non-positive")
+        return float("-inf")
+
+    # Compute log-likelihood
+    log_likelihood = 0
+    for i in range(k):
+        if M[i] > 0:
+            # Log probability for points in cluster i
+            # Assuming spherical Gaussian with variance sigma_squared
+            log_likelihood += M[i] * np.log(M[i] / n)  # mixing proportion
+            log_likelihood -= (M[i] * d / 2) * np.log(
+                2 * np.pi * sigma_squared
+            )  # normalization
+
+            # Distance term (already included in wcss, so we subtract it)
+            cluster_points = X[labels == i]
+            distances_squared = np.sum((cluster_points - centroids[i]) ** 2, axis=1)
+            log_likelihood -= np.sum(distances_squared) / (2 * sigma_squared)
+
+    # Number of free parameters:
+    # - k centroids, each with d coordinates: k * d
+    # - k-1 mixing proportions (sum to 1): k - 1
+    # - 1 variance parameter: 1
+    # Total: k * d + (k - 1) + 1 = k * (d + 1)
+    num_params = k_actual * (d + 1)
+
+    # BIC = -2 * log_likelihood + num_params * log(n)
+    bic_score = -2 * log_likelihood + num_params * np.log(n)
+
+    return (
+        -bic_score
+    )  # Return negative so higher is better (consistent with other metrics)
+
+
+def bic_simplified(X: np.ndarray, labels: np.ndarray) -> float:
+    """
+    Simplified BIC calculation based on within-cluster sum of squares.
+    This version is more commonly used and computationally simpler.
+    """
+    n, d = X.shape
+    k = len(np.unique(labels))
+
+    if k <= 0 or n <= k or d == 0:
+        return float("-inf")
+
+    # Compute centroids
+    centroids = np.array(
+        [X[labels == i].mean(axis=0) for i in range(k) if np.sum(labels == i) > 0]
     )
-    return np.sum(
-        [
-            M[i] * np.log(M[i])
-            - M[i] * np.log(n)
-            - ((M[i] * d) / 2) * np.log(2 * np.pi * cl_var)
-            - ((M[i] - 1) * d / 2)
-            for i in range(k)
-        ]
-    ) - (k / 2) * np.log(n)
+    k_actual = len(centroids)
+
+    # Within-cluster sum of squares
+    wcss = 0
+    for i in range(k):
+        if np.sum(labels == i) > 0:
+            cluster_points = X[labels == i]
+            wcss += np.sum((cluster_points - centroids[i]) ** 2)
+
+    # BIC = n * log(WCSS/n) + k * log(n) * d
+    if wcss <= 0:
+        return float("-inf")
+
+    bic_score = n * np.log(wcss / n) + k_actual * np.log(n) * d
+
+    return -bic_score  # Return negative so higher is better
 
 
 def sum_of_squared_errors(X: np.ndarray, labels: np.ndarray) -> float:
@@ -105,7 +192,7 @@ class MetricEvaluator:
     def _evaluate_bic(
         self, y_true: Optional[np.ndarray], y_pred: np.ndarray, X: np.ndarray, **kwargs
     ) -> float:
-        return 0.0
+        return bic_simplified(X, y_pred)
 
     def _evaluate_silhouette(
         self, y_true: Optional[np.ndarray], y_pred: np.ndarray, X: np.ndarray, **kwargs

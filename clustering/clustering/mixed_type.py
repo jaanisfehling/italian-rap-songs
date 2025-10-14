@@ -297,8 +297,8 @@ def kamila_one_hot(df, k, num_cols, cat_cols):
 
 
 methods: List[Callable[[pd.DataFrame, int, List[str], List[str]], np.ndarray]] = [
-    random,
-    kmeans_onehot_cat,
+    # random,
+    # kmeans_onehot_cat,
     # kmeans_no_cat,
     kmeans_pp_onehot_cat,
     # kmeans_pp_no_cat,
