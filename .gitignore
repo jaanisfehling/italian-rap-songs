@@ -8,3 +8,5 @@ __pycache__/
 .cache/
 .DS_Store
 .ipynb_checkpoints
+.venv/
+venv/
