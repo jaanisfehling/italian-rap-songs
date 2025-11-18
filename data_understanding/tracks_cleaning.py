@@ -224,17 +224,26 @@ def main():
     # 1. strip string columns
     print("Cleaning string columns")
     cols_to_strip = [
-        "album_name", "album_release_date", "album_type", "album_image",
-        "id_album", "id", "id_artist", "name_artist", "full_title", "title",
-        "featured_artists", "primary_artist", "language", "album"
+        "album_name", "album_type", "album_image",
+        "id_album", "id", "id_artist", "name_artist", "full_title",
+        "title", "featured_artists", "primary_artist", "language", "album"
     ]
-    invisible_chars_pattern = r"[\u200b\u200c\u200d\uFEFF\xa0]"
+
+    zero_width_pattern = r"[\u200b\u200c\u200d\uFEFF]"
+
+    nbsp_pattern = r"[\xa0]"
+
     for col in cols_to_strip:
         if col in df.columns:
-            df[col] = (
-                df[col]
+            #strip only non empty rows
+            non_null_mask = df[col].notna()
+            
+            df.loc[non_null_mask, col] = (
+                df.loc[non_null_mask, col]
                 .astype(str)
-                .str.replace(invisible_chars_pattern, "", regex=True)
+                .str.replace(zero_width_pattern, "", regex=True)
+                .str.replace(nbsp_pattern, " ", regex=True)
+                .str.replace(r"\s+", " ", regex=True)
                 .str.strip()
             )
 
