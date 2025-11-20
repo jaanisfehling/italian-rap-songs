@@ -261,7 +261,7 @@ def main():
     ] = 2021
     df.reset_index(drop=True, inplace=True)
 
-    # 3. Fix duplicate IDs
+    # 3. Fix duplicate track IDs
     print("Fixing duplicate track IDs")
     not_unique_ids = df['id'].value_counts()
     not_unique_ids = not_unique_ids[not_unique_ids > 1]
@@ -359,14 +359,106 @@ def main():
     # replace string 'nan' with proper NaN
     df['language'] = df['language'].replace('nan', pd.NA)
 
-    # 8. fix numeric types
+    # 8. Fix duplicate album IDs
+    print("Fixing duplicate album IDs")
+
+    album_name_per_id = df.groupby('id_album')['album_name'].nunique()
+    problematic_album_ids = album_name_per_id[album_name_per_id > 1].index.tolist()
+
+    existing_numbers = (
+        df['id_album']
+        .dropna()
+        .str.extract(r'ALB(\d+)')[0]
+        .dropna()
+        .astype(int)
+    )
+    max_existing_num = existing_numbers.max()
+    existing_ids = set(df['id_album'].dropna())
+    
+    new_ids_assigned = 0
+    for dup_album_id in problematic_album_ids:
+        dup_indices = df.index[df['id_album'] == dup_album_id].tolist()
+        
+        album_groups = df.loc[dup_indices].groupby('album_name').groups
+        
+        #keep the first group unchanged, assign new IDs to others
+        first_group = True
+        for album_name, indices in album_groups.items():
+            if first_group:
+                first_group = False
+                continue
+            
+            while True:
+                max_existing_num += 1
+                new_album_id = f"ALB{max_existing_num:06d}"
+                if new_album_id not in existing_ids:
+                    break
+            
+            for idx in indices:
+                df.at[idx, 'id_album'] = new_album_id
+                new_ids_assigned += 1
+            
+            existing_ids.add(new_album_id)
+    print(f"Fixed album IDs for {new_ids_assigned} rows.")
+
+    #shared album names (unreliable for imputation)
+    albums_per_name = df.groupby('album_name')['id_album'].nunique()
+    shared_album_names = albums_per_name[albums_per_name > 1].index.tolist()
+
+    # 9. standardize different album release dates
+    print("Standardizing album release dates.")
+
+    df['album_release_date'] = pd.to_datetime(df['album_release_date'], errors='coerce')
+    
+    dates_per_id = df.groupby('id_album')['album_release_date'].nunique()
+    problematic_date_ids = dates_per_id[dates_per_id > 1].index.tolist()
+    
+    date_fixes = 0
+    for aid in problematic_date_ids:
+        current_names = df.loc[df['id_album'] == aid, 'album_name'].dropna().unique()
+        if any(name in shared_album_names for name in current_names):
+            continue
+
+        #use the earliest date for this album ID
+        earliest_date = df[df['id_album'] == aid]['album_release_date'].min()
+        
+        if pd.notna(earliest_date):
+            mask = df['id_album'] == aid
+            df.loc[mask, 'album_release_date'] = earliest_date
+            date_fixes += mask.sum()
+    print(f"Standardized release dates for {date_fixes} rows.")
+
+    # 10. fix numeric types
     print("fixing numeric columns")
     df['stats_pageviews'] = pd.to_numeric(df['stats_pageviews'], errors='coerce').astype('Int64')
     df['year'] = pd.to_numeric(df['year'], errors='coerce').astype('Int64')
     df['month'] = pd.to_numeric(df['month'], errors='coerce').astype('Int64')
     df['day'] = pd.to_numeric(df['day'], errors='coerce').astype('Int64')
+
+    print("Filling missing year/month/day (using reliable albums only)")
+    df.loc[(df['year'] < 1973) | (df['year'] > 2025), 'year'] = pd.NA
+
+    #mask where release date exists AND album name is not shared
+    mask_date_available = df['album_release_date'].notna()
+    mask_reliable_album = ~df['album_name'].isin(shared_album_names)
+    mask_imputation = mask_date_available & mask_reliable_album
+
+    #fill year
+    mask_fill_year = df['year'].isna() & mask_imputation
+    df.loc[mask_fill_year, 'year'] = df.loc[mask_fill_year, 'album_release_date'].dt.year
+    df['year'] = df['year'].astype('Int64')
+
+    #fill month
+    mask_fill_month = df['month'].isna() & mask_imputation
+    df.loc[mask_fill_month, 'month'] = df.loc[mask_fill_month, 'album_release_date'].dt.month
+    df['month'] = df['month'].astype('Int64')
+
+    #fill day
+    mask_fill_day = df['day'].isna() & mask_imputation
+    df.loc[mask_fill_day, 'day'] = df.loc[mask_fill_day, 'album_release_date'].dt.day
+    df['day'] = df['day'].astype('Int64')
     
-    # 9. Recalculate Swear Words
+    # 11. recalculate swear words
     print("Recalculating swear words...")
     it_words_to_exclude = ['water', 'blowjob', 'jug', 'toro', 'fortuna', 'zanzara', 'granchio']
     it_words_to_include = [
@@ -423,7 +515,7 @@ def main():
     df['swear_IT'] = df.apply(lambda row: count_swear_words_in_lyrics(row['lyrics'], ast.literal_eval(row['swear_IT_words']) if pd.notna(row['swear_IT_words']) else []), axis=1)
     df['swear_EN'] = df.apply(lambda row: count_swear_words_in_lyrics(row['lyrics'], ast.literal_eval(row['swear_EN_words']) if pd.notna(row['swear_EN_words']) else []), axis=1)
 
-    # 10. recalculate/fill lyric metrics
+    # 12. recalculate/fill lyric metrics
     print("Recalculating and filling missing lyric metrics...")
     
     # n_sentences
@@ -470,32 +562,32 @@ def main():
     mask_fill_atpc = ((df['avg_token_per_clause'].isna()) | (df['avg_token_per_clause'] == 0)) & cmp_avg_token_per_clause.notna() & (cmp_avg_token_per_clause != 0)
     df.loc[mask_fill_atpc, 'avg_token_per_clause'] = cmp_avg_token_per_clause[mask_fill_atpc]
 
-    # 11. fix audio feature outliers
+    # 13. fix audio feature outliers
     print("Fixing audio feature outliers...")
     ids_to_nan = ['TR591502', 'TR508832']
     audio_cols_to_fix = ['bpm', 'centroid', 'rolloff', 'spectral_complexity', 'rms', 'zcr', 'pitch', 'loudness']
     for col in audio_cols_to_fix:
         df.loc[df['id'].isin(ids_to_nan), col] = np.nan
 
-    # 12. fix popularity
+    # 14. fix popularity
     print("Fixing 'popularity' column...")
     df['popularity'] = pd.to_numeric(df['popularity'], errors='coerce')
     invalid_range_mask = (df['popularity'] < 0) | (df['popularity'] > 100)
     df.loc[invalid_range_mask, 'popularity'] = np.nan
     df['popularity'] = df['popularity'].astype('Int64')
 
-    # 13. fix explicit
+    # 15. fix explicit
     print("Recalculating 'explicit' column based on swear words...")
     df['total_swear_words'] = df['swear_IT'] + df['swear_EN']
     df.loc[(df['total_swear_words'] == 0), 'explicit'] = False
     df.loc[(df['total_swear_words'] > 0), 'explicit'] = True
     df['explicit'] = df['explicit'].astype('boolean') #use nullable boolean
 
-    # 14. drop helper columns
+    # 16. drop helper columns
     cols_to_drop = ['total_swear_words']
     df = df.drop(columns=[col for col in cols_to_drop if col in df.columns])
 
-    # 15. save cleaned data
+    # 17. save cleaned data
     try:
         df.to_csv(output_file, index=False)
         print(f"Successfully saved preprocessed data to '{output_file}'.")
