@@ -240,8 +240,8 @@ def fetch_date_components(row, sp_client):
 def main():
     print("Starting data preprocessing script")
 
-    CLIENT_ID = 'fa06d2545e8642e7aeb14e67ed6b8302'         
-    CLIENT_SECRET = '1e1d8650642444beacce263b7b5428e5'
+    CLIENT_ID = 'your_client_ID'         
+    CLIENT_SECRET = 'your_client_Secret'
 
     input_file = '../dataset/tracks.csv'
     output_file = '../dataset/cleaned_tracks.csv'
