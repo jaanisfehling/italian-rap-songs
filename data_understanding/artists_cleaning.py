@@ -227,18 +227,18 @@ def main():
     df = enrich_active_start_from_tracks(df, TRACKS_FILE)
 
     # 4. drop useless columns (based on analysis)
-    print("Dropping irrelevant columns (active_end, description, country)...")
+    print("Dropping irrelevant columns (active_end, description, country)")
     df.drop(columns=['active_end', 'description', 'country'], inplace=True, errors='ignore')
 
     # 5. geographic enrichment
-    print("Starting Geographic Enrichment (this may take time)...")
+    print("Starting Geographic Enrichment (this may take time)")
     
     osm_locator = Nominatim(user_agent=USER_AGENT, timeout=10)
     reverse_osm = RateLimiter(osm_locator.reverse, min_delay_seconds=1.0)
     
     mask_has_coords = (df['latitude'].notna()) & (df['longitude'].notna()) & (df['province'].isna())
     if mask_has_coords.sum() > 0:
-        print(f"Reverse geocoding {mask_has_coords.sum()} rows...")
+        print(f"Reverse geocoding {mask_has_coords.sum()} rows")
         tqdm.pandas(desc="Reverse Geocoding")
         df.loc[mask_has_coords, ['province', 'region']] = df[mask_has_coords].progress_apply(
             lambda row: get_osm_address_from_coords(row, reverse_osm), axis=1
@@ -248,14 +248,14 @@ def main():
     missing_loc_mask = df['province'].isna() | df['region'].isna()
     
     if missing_loc_mask.sum() > 0:
-        print(f"Fetching Wikidata for {missing_loc_mask.sum()} artists with missing location...")
+        print(f"Fetching Wikidata for {missing_loc_mask.sum()} artists with missing location")
         
         rows_to_fetch = df[missing_loc_mask].copy()
         
         if os.path.exists(TRACKS_FILE):
             df_tracks = pd.read_csv(TRACKS_FILE)
-            track_names = df_tracks[['id_artist', 'name_artist']].drop_duplicates().rename(columns={'id_artist': 'id_author'})
-            rows_to_fetch = pd.merge(rows_to_fetch, track_names, on='id_author', how='left')
+            track_map = df_tracks[['id_artist', 'name_artist']].drop_duplicates().set_index('id_artist')['name_artist'].to_dict()
+            rows_to_fetch['name_artist'] = rows_to_fetch['id_author'].map(track_map)
         else:
             rows_to_fetch['name_artist'] = np.nan
 
