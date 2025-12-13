@@ -7,6 +7,8 @@ import ast
 from langdetect import detect, DetectorFactory
 from langdetect.lang_detect_exception import LangDetectException
 from os import path
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
 
 # --- functions from track analysis' notebook ---
 
@@ -195,14 +197,57 @@ def analyze_avg_token_per_clause(lyrics, lang, models_pos_taggers, stored_avg_to
         return 0
     else:
         return total_non_punct_tokens / num_predicates
+    
+def clean_title(title):
+    return re.sub(r"[\(\[].*?[\)\]]", "", str(title)).strip()
+
+def fetch_date_components(row, sp_client):
+    #if year is already present, return existing values
+    if pd.notna(row['year']):
+        return row['year'], row['month'], row['day']
+
+    if sp_client is None:
+        return np.nan, np.nan, np.nan
+
+    query = f"artist:{row['name_artist']} track:{row['title']}"
+    try:
+        results = sp_client.search(q=query, type='track', limit=1)
+        
+        #fallback search with cleaned title
+        if not results['tracks']['items']:
+             clean_query = f"artist:{row['name_artist']} track:{clean_title(row['title'])}"
+             results = sp_client.search(q=clean_query, type='track', limit=1)
+             
+        items = results['tracks']['items']
+        
+        if items:
+            release_date = items[0]['album']['release_date']
+            parts = release_date.split('-')
+            
+            y = int(parts[0])
+            m = int(parts[1]) if len(parts) > 1 else np.nan
+            d = int(parts[2]) if len(parts) > 2 else np.nan
+            
+            return y, m, d
+            
+    except Exception:
+        pass
+    
+    return np.nan, np.nan, np.nan
 
 # --- main ---
 
 def main():
     print("Starting data preprocessing script")
 
+    CLIENT_ID = 'fa06d2545e8642e7aeb14e67ed6b8302'         
+    CLIENT_SECRET = '1e1d8650642444beacce263b7b5428e5'
+
     input_file = '../dataset/tracks.csv'
     output_file = '../dataset/cleaned_tracks.csv'
+
+    auth_manager = SpotifyClientCredentials(client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
+    sp = spotipy.Spotify(auth_manager=auth_manager)
 
     DetectorFactory.seed = 0
     models_tokenizers, models_pos_taggers = load_spacy_models()
@@ -438,6 +483,23 @@ def main():
     print("Filling missing year/month/day (using reliable albums only)")
     df.loc[(df['year'] < 1973) | (df['year'] > 2025), 'year'] = pd.NA
 
+    initial_missing = df['year'].isna().sum()
+
+    print("Fetching missing date components from Spotify API...")
+    initial_missing = df['year'].isna().sum()
+    
+    date_components = df.apply(lambda row: fetch_date_components(row, sp), axis=1, result_type='expand')
+    df[['year', 'month', 'day']] = date_components
+    
+    # Ensure correct types after update
+    df['year'] = pd.to_numeric(df['year'], errors='coerce').astype('Int64')
+    df['month'] = pd.to_numeric(df['month'], errors='coerce').astype('Int64')
+    df['day'] = pd.to_numeric(df['day'], errors='coerce').astype('Int64')
+    
+    final_missing = df['year'].isna().sum()
+    print(f"Filled {initial_missing - final_missing} rows using Spotify API.")
+
+    print("Filling remaining missing year/month/day (using reliable albums only)")
     #mask where release date exists AND album name is not shared
     mask_date_available = df['album_release_date'].notna()
     mask_reliable_album = ~df['album_name'].isin(shared_album_names)
