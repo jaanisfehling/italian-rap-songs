@@ -202,8 +202,8 @@ def clean_title(title):
     return re.sub(r"[\(\[].*?[\)\]]", "", str(title)).strip()
 
 def fetch_date_components(row, sp_client):
-    #if year is already present, return existing values
-    if pd.notna(row['year']):
+    #if release date is already present, return existing values
+    if pd.notna(row['year']) and pd.notna(row['month']) and pd.notna(row['day']):
         return row['year'], row['month'], row['day']
 
     if sp_client is None:
@@ -227,13 +227,17 @@ def fetch_date_components(row, sp_client):
             y = int(parts[0])
             m = int(parts[1]) if len(parts) > 1 else np.nan
             d = int(parts[2]) if len(parts) > 2 else np.nan
+
+            final_y = y if pd.notna(y) else row['year']
+            final_m = m if pd.notna(m) else row['month']
+            final_d = d if pd.notna(d) else row['day']
             
-            return y, m, d
+            return final_y, final_m, final_d
             
     except Exception:
         pass
     
-    return np.nan, np.nan, np.nan
+    return row['year'], row['month'], row['day']
 
 # --- main ---
 
@@ -480,13 +484,13 @@ def main():
     df['month'] = pd.to_numeric(df['month'], errors='coerce').astype('Int64')
     df['day'] = pd.to_numeric(df['day'], errors='coerce').astype('Int64')
 
-    print("Filling missing year/month/day (using reliable albums only)")
     df.loc[(df['year'] < 1973) | (df['year'] > 2025), 'year'] = pd.NA
 
     initial_missing = df['year'].isna().sum()
 
     print("Fetching missing date components from Spotify API...")
     initial_missing = df['year'].isna().sum()
+    initial_missing_dates = df[['year', 'month', 'day']].isna().any(axis=1).sum()
     
     date_components = df.apply(lambda row: fetch_date_components(row, sp), axis=1, result_type='expand')
     df[['year', 'month', 'day']] = date_components
@@ -497,7 +501,9 @@ def main():
     df['day'] = pd.to_numeric(df['day'], errors='coerce').astype('Int64')
     
     final_missing = df['year'].isna().sum()
-    print(f"Filled {initial_missing - final_missing} rows using Spotify API.")
+    final_missing_dates = df[['year', 'month', 'day']].isna().any(axis=1).sum()
+    print(f"Filled {initial_missing - final_missing} years using Spotify API.")
+    print(f"Filled {initial_missing_dates - final_missing_dates} rows using Spotify API.")
 
     print("Filling remaining missing year/month/day (using reliable albums only)")
     #mask where release date exists AND album name is not shared
