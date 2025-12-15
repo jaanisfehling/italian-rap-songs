@@ -83,6 +83,20 @@ def nullify_bad_lyrics(lyrics): #sets lyrics for instrumentals, metadata, and de
     
     return lyrics
 
+prod_pattern = re.compile(r'La produzione.*', re.IGNORECASE | re.DOTALL)
+
+def remove_production_only_lyrics(row):
+    if pd.isna(row['lyrics']):
+        return np.nan
+
+    # Use row['n_sentences'] directly (assuming it exists in input CSV)
+    # Using simple equality check as requested
+    if row['n_sentences'] == 1:
+        if prod_pattern.search(row['lyrics']):
+            return np.nan
+            
+    return row['lyrics']
+
 def detect_language(lyrics):
     #handle NaN, empty, or non-string lyrics
     if pd.isna(lyrics) or not isinstance(lyrics, str) or not lyrics.strip():
@@ -244,8 +258,8 @@ def fetch_date_components(row, sp_client):
 def main():
     print("Starting data preprocessing script")
 
-    CLIENT_ID = 'your_client_ID'         
-    CLIENT_SECRET = 'your_client_Secret'
+    CLIENT_ID = '6c362c1a59244409b7a2042986817a69'         
+    CLIENT_SECRET = '10e9d0585552426281cdd579bf564b5a'
 
     input_file = '../dataset/tracks.csv'
     output_file = '../dataset/cleaned_tracks.csv'
@@ -360,8 +374,14 @@ def main():
         "Vita Vera - Story", "Meteoriti (english)", "24h Non Stop", "Dimmi Che Farai",
         "Se ti girassi"
     ]
-    df['lyrics'] = df.apply(clean_contributor_lyrics, axis=1, rescue_list=rescue_list)
+    df['lyrics'] = df.apply(clean_contributor_lyrics, axis=1, rescue_list=rescue_list) 
     df['lyrics'] = df['lyrics'].apply(nullify_bad_lyrics)
+
+    lyrics_before = df['lyrics'].copy()
+    df['lyrics'] = df.apply(remove_production_only_lyrics, axis=1)
+
+    deleted_mask = (lyrics_before.notna()) & (df['lyrics'].isna())
+    deleted_count = deleted_mask.sum()
 
     # 6. adjusting lyrics-dependent columns
     print("Adjusting metrics for tracks with no lyrics...")
@@ -585,6 +605,9 @@ def main():
 
     # 12. recalculate/fill lyric metrics
     print("Recalculating and filling missing lyric metrics...")
+
+    # use computed_lexical_density (Regex) as new standard
+    df['lexical_density'] = df['lyrics'].apply(compute_lexical_density_regex)
     
     # n_sentences
     df['n_sentences'] = pd.to_numeric(df['n_sentences'], errors='coerce').astype('Int64')
@@ -630,13 +653,70 @@ def main():
     mask_fill_atpc = ((df['avg_token_per_clause'].isna()) | (df['avg_token_per_clause'] == 0)) & cmp_avg_token_per_clause.notna() & (cmp_avg_token_per_clause != 0)
     df.loc[mask_fill_atpc, 'avg_token_per_clause'] = cmp_avg_token_per_clause[mask_fill_atpc]
 
-    # 13. fix audio feature outliers
-    print("Fixing audio feature outliers...")
-    ids_to_nan = ['TR591502', 'TR508832']
-    audio_cols_to_fix = ['bpm', 'centroid', 'rolloff', 'spectral_complexity', 'rms', 'zcr', 'pitch', 'loudness']
-    for col in audio_cols_to_fix:
-        df.loc[df['id'].isin(ids_to_nan), col] = np.nan
+    #handle cases where tokens_per_sent is high with only one sentence = recompute number of sentences
+    target_mask = (df['tokens_per_sent'] > 15) & (df['n_sentences'] == 1) & (df['lyrics'].notna())
+    
+    if target_mask.sum() > 0:
+        for idx in df[target_mask].index:
+            lyrics = df.at[idx, 'lyrics']
+            non_empty_count = count_sentences_in_lyrics(lyrics)
+            
+            if non_empty_count == 1:
+                lang = df.at[idx, 'language']
+                spacy_count = count_sentences_spacy(lyrics, lang, models_tokenizers, pd.NA)
+                df.at[idx, 'n_sentences'] = spacy_count
+            else:
+                df.at[idx, 'n_sentences'] = non_empty_count
+        
+        # recalculate tokens_per_sent for these rows
+        df.loc[target_mask, 'n_tokens'] = df.loc[target_mask, 'lyrics'].apply(count_tokens_split_punctuation)
+        df.loc[target_mask, 'tokens_per_sent'] = df.loc[target_mask, 'n_tokens'] / df.loc[target_mask, 'n_sentences']
 
+    print("Refining avg_token_per_clause for outliers...")
+    threshold_atpc = df['avg_token_per_clause'].quantile(0.98)
+    outliers_mask = (df['avg_token_per_clause'] > threshold_atpc) & (df['lyrics'].notna())
+    
+    if outliers_mask.sum() > 0:
+        new_atpc = df.loc[outliers_mask].apply(
+            lambda row: analyze_avg_token_per_clause(
+                row['lyrics'], 
+                row['language'], 
+                models_pos_taggers, 
+                row['avg_token_per_clause']
+            ), axis=1
+        )
+        df.loc[outliers_mask, 'avg_token_per_clause'] = new_atpc
+
+    target_track_mask = df['title'].str.contains("Ne se obrushtai", na=False, regex=False) | \
+                        df['title'].str.contains("Не се обръщай", na=False, regex=False)
+    if target_track_mask.any():
+        df.loc[target_track_mask, 'avg_token_per_clause'] = 3.95
+    target_track_mask = df['title'].str.contains("Бары", na=False, regex=False)
+    if target_track_mask.any():
+        df.loc[target_track_mask, 'avg_token_per_clause'] = 5.16
+
+    # 13. fix audio feature outliers
+    print("Fixing audio feature outliers using thresholds...")
+
+    mask_bpm = df['bpm'] > 250
+    print(f"  - Removing {mask_bpm.sum()} BPM outliers (>250)")
+    df.loc[mask_bpm, 'bpm'] = np.nan
+    
+    mask_centroid = df['centroid'] < 0.001
+    print(f"  - Removing {mask_centroid.sum()} Centroid outliers (<0.001)")
+    df.loc[mask_centroid, 'centroid'] = np.nan
+    
+    mask_rolloff = df['rolloff'] < 20.0
+    print(f"  - Removing {mask_rolloff.sum()} Rolloff outliers (<20.0)")
+    df.loc[mask_rolloff, 'rolloff'] = np.nan
+    
+    mask_flux = df['flux'] < 0.001
+    print(f"  - Removing {mask_flux.sum()} Flux outliers (<0.001)")
+    df.loc[mask_flux, 'flux'] = np.nan
+    
+    mask_loudness = df['loudness'] < 0.001
+    print(f"  - Removing {mask_loudness.sum()} Loudness outliers (<0.001)")
+    df.loc[mask_loudness, 'loudness'] = np.nan
     # 14. fix popularity
     print("Fixing 'popularity' column...")
     df['popularity'] = pd.to_numeric(df['popularity'], errors='coerce')
