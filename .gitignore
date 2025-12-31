@@ -11,3 +11,4 @@ __pycache__/
 .venv/
 venv/
 new_one.ipynb
+timeseries/fedez_fibra/
