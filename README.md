@@ -1,7 +1,7 @@
 
 # Data Mining Project: Italian Rap Songs
 
-This project was developed as part of the *Data Minin** course at the University of Pisa (UniPi) by [Emiliano Sescu](https://github.com/Faxatos), [Jaanis Fehling](https://github.com/jaanisfehling), and [Dieudonné Iyabivuze](https://github.com/Iyabivuz-e). It presents a comprehensive data mining analysis of Italian rap music, examining lyrical patterns, audio features, and regional characteristics through clustering, classification, and time series methodologies.
+This project was developed as part of the *Data Mining* course at the University of Pisa (UniPi) by [Emiliano Sescu](https://github.com/Faxatos), [Jaanis Fehling](https://github.com/jaanisfehling), and [Dieudonné Iyabivuze](https://github.com/Iyabivuz-e). It presents a comprehensive data mining analysis of Italian rap music, examining lyrical patterns, audio features, and regional characteristics through clustering, classification, and time series methodologies.
 
 A high-level overview is provided below. Detailed methodological explanations and intermediate results are documented within the individual Jupyter notebooks, while the [project  report](https://github.com/jaanisfehling/italian-rap-songs/blob/main/report.pdf) presents more in-depth findings accompanied by visual analyses.
 
